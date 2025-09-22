@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"iter"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"nathan.simpledb/src/internal/errors"
 	"nathan.simpledb/src/internal/field"
+	hf "nathan.simpledb/src/internal/file"
 	"nathan.simpledb/src/internal/interfaces"
 	"nathan.simpledb/src/internal/tuple"
 )
@@ -124,10 +127,11 @@ func (c *Catalog) LoadSchema(catalogFile string) {
 	for br.Scan() {
 		line := br.Text()
 		// format:name (fieldname type, fieldname type, ...)
-		name := strings.SplitN(line, " ", 1)
-		if len(name) < 1 {
+		_name := strings.SplitN(line, " ", 1)
+		if len(_name) < 1 {
 			panic(fmt.Sprintf("line %d: could not parse `name`", lineNo))
 		}
+		name := _name[0]
 		fieldStart := strings.Index(line, "(")
 		fieldEnd := strings.Index(line, ")")
 		if fieldStart < 0 || fieldEnd < 0 {
@@ -137,13 +141,14 @@ func (c *Catalog) LoadSchema(catalogFile string) {
 		fieldTypes := strings.Split(fields, ",")
 		names := []string{}
 		types := []interfaces.Type{}
+		primaryKey := ""
 		for fieldNo, typ := range fieldTypes {
 			els := strings.SplitN(typ, " ", 3)
 			if len(els) < 2 {
 				panic(fmt.Sprintf("line %d: could not parse `fields`[%d]", lineNo, fieldNo))
 			}
-			colName, colType := els[0], els[1]
-			names = append(names, strings.Trim(colName, " "))
+			colName, colType := strings.Trim(els[0], " "), strings.Trim(els[1], " ")
+			names = append(names, colName)
 			switch strings.Trim(colType, " ") {
 			case "int":
 				types = append(types, field.INT_TYPE)
@@ -155,16 +160,31 @@ func (c *Catalog) LoadSchema(catalogFile string) {
 			if len(els) < 3 {
 				continue
 			}
-			annotation := els[2]
-			switch strings.Trim(annotation, " ") {
+			annotation := strings.Trim(els[2], " ")
+			switch annotation {
 			case "pk":
+				primaryKey = colName
 			default:
 				panic(fmt.Sprintf("line %d: could not parse `fields`[%d]: unknown annotation %s", lineNo, fieldNo, annotation))
 			}
-
+		}
+		td := tuple.NewTupleDesc(types, names)
+		f, err := os.Create(fmt.Sprintf("%s.dat", name))
+		if err != nil {
+			panic("failed to create file!")
+		}
+		exec, err := os.Executable()
+		if err != nil {
+			panic("failed to read executable path!")
 		}
 
-
+		fp, err := filepath.Abs(exec + "/" + name + ".dat")
+		if err != nil {
+			panic("could not create file!")
+		}
+		tableHF := hf.NewHeapFile(f, fp, td)//TODO: heapfile
+		c.AddTable(tableHF, name, primaryKey)
+		log.Default().Printf("New table: %s with schema: %s", name, td)
 
 		lineNo++
 	}
